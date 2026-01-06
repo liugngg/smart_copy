@@ -204,73 +204,86 @@ class SmartCopyApp:
         threading.Thread(target=self.run_copy, args=(size_range,), daemon=True).start()
 
     def run_copy(self, size_range):
-        src_root, dst_root = self.src_path.get(), self.dst_path.get()
-        min_b, max_b = size_range
-        exts_lst = re.split("[,;|，；\s]", self.file_exts.get())
-        exts = [e.strip().lower() for e in exts_lst if e.strip()]
-        
-        reg = None
-        if self.folder_regex.get().strip():
-            try: 
-                reg = re.compile(self.folder_regex.get().strip())
-            except re.error as e:
-                err = str(e)
-                self.root.after(0, lambda m=err: messagebox.showerror("正则错误", f"无效的正则表达式: {m}"))
-                self.root.after(0, lambda: self.start_btn.config(state=NORMAL))
-                return
-        copied_count = 0
-        try:
-            for root, dirs, files in os.walk(src_root, topdown=True):
-                # 如果不递归，同时当前路径不是src_root: 清空 dirs 列表阻止 walk 继续深入
-                if not self.is_recursive.get() and root != src_root:
-                    dirs[:] = []
-                    continue
+            src_root, dst_root = self.src_path.get(), self.dst_path.get()
+            min_b, max_b = size_range
+            exts_lst = re.split("[,;|，；\s]", self.file_exts.get())
+            exts = [e.strip().lower() for e in exts_lst if e.strip()]
+            
+            reg = None
+            if self.folder_regex.get().strip():
+                try: 
+                    reg = re.compile(self.folder_regex.get().strip())
+                except re.error as e:
+                    err = str(e)
+                    self.root.after(0, lambda m=err: messagebox.showerror("正则错误", f"无效的正则表达式: {m}"))
+                    self.root.after(0, lambda: self.start_btn.config(state=NORMAL))
+                    return
 
-                # 过滤子目录 (针对正则表达式)
-                if reg:
-                    dirs[:] = [d for d in dirs if reg.search(d)]
-
-                rel_path = os.path.relpath(root, src_root)
-                target_dir = dst_root if rel_path == '.' else os.path.join(dst_root, rel_path)
-
-                # 1. 如果需要拷贝空文件夹，或者该文件夹下有符合条件的文件，则创建目录
-                if self.copy_empty_dir.get() and not os.path.exists(target_dir):
-                    os.makedirs(target_dir, exist_ok=True)
-                    
-                # 2. 处理文件
-                for f in files:
-                    # 检查后缀
-                    if exts and not any(f.lower().endswith(e if e.startswith('.') else f'.{e}') for e in exts):
+            copied_count = 0
+            try:
+                for root, dirs, files in os.walk(src_root, topdown=True):
+                    # --- 1. 递归深度控制 ---
+                    # 如果用户关闭了“包含子文件夹”，则只处理根目录，清空 dirs 以停止深入
+                    if not self.is_recursive.get() and root != src_root:
+                        dirs[:] = []
                         continue
+
+                    # --- 2. 文件夹匹配判定 ---
+                    # 如果没有设置正则，默认全部匹配
+                    # 如果设置了正则，判断当前文件夹【名称】是否符合要求
+                    folder_name = os.path.basename(root)
                     
-                    f_path = os.path.join(root, f)
-                    try:
-                        f_size = os.path.getsize(f_path)
-                        if not (min_b <= f_size <= max_b): 
-                            continue
-                        
-                        # 确保目标文件夹存在
-                        if not os.path.exists(target_dir):
+                    is_folder_matched = True
+                    if reg:
+                        # 如果是源根目录本身，我们通常允许它继续向下查找，但不直接匹配它里面的文件（除非根目录名也符合正则）
+                        if root == src_root:
+                            is_folder_matched = False 
+                        else:
+                            is_folder_matched = bool(reg.search(folder_name))
+
+                    # --- 3. 执行拷贝逻辑 ---
+                    if is_folder_matched:
+                        rel_path = os.path.relpath(root, src_root)
+                        target_dir = os.path.join(dst_root, rel_path)
+
+                        # 检查是否需要创建空文件夹
+                        if self.copy_empty_dir.get() and not os.path.exists(target_dir):
                             os.makedirs(target_dir, exist_ok=True)
                             
-                        d_file = os.path.join(target_dir, f)
-                        shutil.copy2(f_path, d_file)
-                        copied_count += 1
-                        
-                        # 局部变量捕获，避免 lambda 引用问题
-                        fname = f 
-                        self.root.after(0, lambda n=fname: self.log(f"已拷贝文件: {n}"))
-                    except Exception:
-                        continue
-            self.root.after(0, lambda c=copied_count: messagebox.showinfo("完成", f"任务结束！共拷贝 {c} 个文件。"))
-            
-        except Exception as e:
-            # 修复 NameError 的关键点
-            error_val = str(e)
-            self.root.after(0, lambda msg=error_val: self.log(f"运行错误: {msg}", "ERROR"))
-        finally:
-            self.root.after(0, lambda: self.start_btn.config(state=NORMAL))
-            self.root.after(0, lambda: self.progress.configure(value=100))
+                        # 处理当前匹配文件夹下的文件
+                        for f in files:
+                            # 检查后缀
+                            if exts and not any(f.lower().endswith(e if e.startswith('.') else f'.{e}') for e in exts):
+                                continue
+                            
+                            f_path = os.path.join(root, f)
+                            try:
+                                f_size = os.path.getsize(f_path)
+                                if not (min_b <= f_size <= max_b): 
+                                    continue
+                                
+                                # 确保目标文件夹存在（如果不是空文件夹模式，在有文件拷贝时才创建）
+                                if not os.path.exists(target_dir):
+                                    os.makedirs(target_dir, exist_ok=True)
+                                    
+                                d_file = os.path.join(target_dir, f)
+                                shutil.copy2(f_path, d_file)
+                                copied_count += 1
+                                
+                                self.root.after(0, lambda n=f: self.log(f"已拷贝: {n}"))
+                            except Exception:
+                                continue
+                    
+                    # 注意：这里不再修改 dirs[:]，这样 os.walk 就会继续走向更深层的子目录
+
+                self.root.after(0, lambda c=copied_count: messagebox.showinfo("完成", f"任务结束！共拷贝 {c} 个文件。"))
+                
+            except Exception as e:
+                error_val = str(e)
+                self.root.after(0, lambda msg=error_val: self.log(f"运行错误: {msg}", "ERROR"))
+            finally:
+                self.root.after(0, lambda: self.start_btn.config(state=NORMAL))
+                self.root.after(0, lambda: self.progress.configure(value=100))
 
 if __name__ == "__main__":
     root = TkinterDnD.Tk()

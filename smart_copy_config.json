@@ -1,0 +1,10 @@
+{
+    "src_path": "D:/test/source",
+    "dst_path": "D:/test/target",
+    "is_recursive": true,
+    "copy_empty_dir": true,
+    "folder_regex": "te",
+    "file_exts": ".MP3",
+    "min_size": "0",
+    "max_size": "1024"
+}
